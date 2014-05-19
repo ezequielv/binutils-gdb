@@ -1876,6 +1876,70 @@ linux_low_filter_event (ptid_t filter_ptid, int lwpid, int wstat)
 	}
     }
 
+//#define EZEQUIELV_FIXES_01 1 /* manual signal enqueuing, manual call to ptrace() */
+#define EZEQUIELV_FIXES_02 1 /* call linux_resume_one_lwp() */
+
+#if EZEQUIELV_FIXES_01 || EZEQUIELV_FIXES_02
+  /* if we have stopped because of an unexpected signal
+   * (SIGTRAP is the only one we're expecting when we're
+   * about to "reinsert" a breakpoint instruction),
+   */
+  if ((WIFSTOPPED (wstat) && WSTOPSIG (wstat) != SIGTRAP)
+      && child->bp_reinsert != 0)
+    {
+      if (debug_threads)
+	debug_printf ("[ezequielv] linux_low_filter_event: lwp %d stopped by '%s'"
+	    " whilst trying to execute a single instruction to re-insert a breakpoint/tracepoint"
+	    " at 0x%lx."
+	    " enqueing this signal to be processed later and ignore for the moment.\n",
+	    lwpid, status_to_str (wstat), (long) child->bp_reinsert);
+
+#if EZEQUIELV_FIXES_01
+      // FIXME: detect that we're in "single step" mode
+      // MAYBE: detect if the 'pc' matches the address that we're single stepping on
+	// ref?: || lwp->bp_reinsert != 0
+      // FIXME: detect if the SIGNAL is *not* SIGTRAP (it's SIGRTMIN for my test case)
+      // actions:
+      // FIXME: enqueue the signal
+	// ref: static void
+	// ref: enqueue_one_deferred_signal (struct lwp_info *lwp, int *wstat)
+      enqueue_one_deferred_signal (child, &wstat); /* returns void */
+      /* the signal will be dealt with later */
+      /* if we are in "single step" mode, instruct the kernel to execute the
+       * following instruction in that mode */
+      if (debug_threads)
+	debug_printf ("[ezequielv] linux_low_filter_event: resuming pid %d using '%s' mode: ptrace(): ",
+	    lwpid,
+	    (child->stepping ? "single step" : "continue"));
+      /* note: code inspired by ptrace() invocation in linux_resume_one_lwp() */
+      if (ptrace (child->stepping ? PTRACE_SINGLESTEP : PTRACE_CONT, lwpid_of (thread),
+	   (PTRACE_TYPE_ARG3) 0,
+	   /* Coerce to a uintptr_t first to avoid potential gcc warning
+	      of coercing an 8 byte integer to a 4 byte pointer.  */
+	   /* no signals to be delivered to inferior */
+	   (PTRACE_TYPE_ARG4) (uintptr_t) 0) == 0)
+      {
+	if (debug_threads) debug_printf ("succeeded\n");
+      }
+      else
+      {
+	if (debug_threads) debug_printf ("failed\n");
+      }
+
+      return NULL;
+#endif /* EZEQUIELV_FIXES_01 */
+
+#if EZEQUIELV_FIXES_02
+      /* note: look at start_step_over() for more ideas */
+      linux_resume_one_lwp (child, 1 /* single-step */, WSTOPSIG (wstat), NULL /* siginfo_t */ ); /* returns void */
+
+      return NULL;
+#endif
+
+
+    }
+#endif /* EZEQUIELV_FIXES_01 || ... */
+
     /* Check if the thread has exited.  */
   if ((WIFEXITED (wstat) || WIFSIGNALED (wstat))
       && num_lwps (pid_of (thread)) > 1)

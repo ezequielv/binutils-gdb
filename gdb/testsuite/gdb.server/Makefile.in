@@ -3,6 +3,7 @@ srcdir = @srcdir@
 
 EXECUTABLES = ext-attach ext-run file-transfer server-mon server-run \
 	no-thread-db
+EXECUTABLES += trace-signals
 
 MISCELLANEOUS =
 
